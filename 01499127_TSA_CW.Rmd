@@ -1,0 +1,446 @@
+---
+title: "Time Series Analysis Coursework"
+subtitle: "This is my own unaided work unless stated otherwise"
+author: 
+- "Yajat Bansal"
+- "CID: 01499127"
+geometry: margin=1.2cm
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = "center")
+```
+Our code will be implemented in R. Before we begin, let us set a seed so our results may be reproduced easily.
+```{r}
+set.seed(10)
+```
+# Question 1
+### 1a
+Our implementation of \texttt{S\_AR(f,phis,sigma2)} is below using the equation derived in [1, p50]
+```{r 1a}
+# part a 
+vandermonde <- function(vec, n){
+  # generates the Vandermonde matrix given a vector and n, the width of the matrrix
+    vandermonde_matrix <- matrix(data = NA, nrow = length(vec), ncol = n)
+    for (i in 1:n) vandermonde_matrix[,i] <- vec^(i-1)
+    return(vandermonde_matrix)}
+
+S_AR <- function(f, phis, sigma2){
+  # evalautes the parametric form of sdf at specific frequencies
+  
+  # t(vandermonde(exp(-1i *2*pi*f), length(phis)+1) generates the 
+  # vandermonde matrix of vectors (1, e^-i2*pi*f,..., e^-i2*pi*fp) for each f
+  
+  # matrix mult of (1, phi_1p, ..., phi_pp) and the vandermonde matrix
+  return(sigma2/abs(c(1,-phis) %*% t(vandermonde(exp(-1i *2*pi*f), length(phis)+1)))^2)}
+```
+
+### 1b
+The function \texttt{AR2\_sim(phis,sigma2,N)} is coded
+```{r 1b}
+# part b
+AR2_sim <- function(phis, sigma2, N){
+  # simulates a Gaussian AR(2) process of length N
+
+  # initialise X vector of length 100+N
+  X <- vector(mode = "numeric", length = 100+N)
+  
+  # generating white noise values premptively for efficiency
+  epsilons <- rnorm(98+N, sd = sqrt(sigma2))
+  
+  # dot product doing: phis[1]* X[i+1] + phis[2] * X[i]
+  for (i in 1:(98+N)) X[i+2] <- phis %*% X[(i+1):i] + epsilons[i]
+  
+  # return X_101,.., X_(100+N), vector of length N for the time series
+  return(X[101:(100+N)])}
+```
+
+### 1c
+Finally, \texttt{acvs\_hat(X,tau)} is coded using the equation for $\hat{s_{\tau}}^{(p)}$ on [1, p56]
+```{r 1c}
+# part c
+acvs_hat <- function(X, tau){
+  # returns the estimated autocovariance using the biased estimator s_hat^u_{tau}
+  # takes in tau values as well as a vector of the time series X
+  
+  # number of time series values we have and number of tau values
+  N <- length(X)
+  len_tau <- length(tau)
+  
+  # preallocating s_hat as a vector of length of the number of tau values
+  s_hat <- vector(mode = "numeric", length = len_tau)
+  
+  tau <- abs(tau) # to make our calculations easier
+  
+  # implementing the formula directly by doing a dot product
+  # we have assumed means of the time series' to be zero throughout the cwk
+  for (i in 1:len_tau) s_hat[i] <- X[1:(N-tau[i])] %*% X[(tau[i]+1):N]/N
+  
+  # return a vector of vals of acvs evaluated at elements of tau
+  return(s_hat)
+} 
+```
+
+# Question 2
+### 2a
+The \textit{Fast Fourier Transform (FFT)} algorithm is a method of computing the \textit{Discrete Fourier Transform (DFT)} in a fast and efficient manner. This is equivalent to the Fourier transform at the Fourier frequencies $f_k = k/N$, where $k = 0,\dots, N-1$. For a vector of $N$ process observations $\mathbf{X} = (X_1,\dots,X_N)$, the periodogram, denoted $\hat{S}^{(p)}(f)$, is defined as [1, p58] \[\hat{S}^{(p)}(f) = \frac{1}{N}\left|\sum_{t=1}^{N} X_{t} e^{-i 2 \pi f t}\right|^{2}\] 
+Therefore, we using the FFT, we have the vector of $\hat{S}^{(p)}(f)$ evaluated at the Fourier frequencies is equal to $\left|\left[\text{FFT}(\mathbf{X})\right]^2\right|/N$. So, the \texttt{periodogram} function is coded
+```{r}
+# part a
+periodogram <- function(X){
+  # directly calculates the periodogram using the FFT algorithm (inbuilt function)
+  # input: A time series stored as a vector X
+  # output: the periodogram vector of length length(X) evaluated at the Fourier Frequencies
+  
+  return((abs(fft(X))^2)/length(X))}
+```
+
+The direct spectral estimate, denoted $\hat{S}^{(d)}(f)$, is defined as [1, p62] \[\hat{S}^{(d)}(f) = \left|\sum_{t=1}^{N} h_{t} X_{t} e^{-i 2 \pi f t}\right|^{2}\] where $h_t$ are the data taper constants. If we let $\mathbf{X}$ be as before and let $\mathbf{h} = (h_1,\dots,h_N)$, we may similarly use the FFT to get the vector of $\hat{S}^{(d)}(f)$ evaluated at the Fourier frequencies is equal to $\left|\left[\text{FFT}(\mathbf{X\cdot\mathbf{h}})\right]^2\right|$. In our implementation, we will use the \textit{Hanning taper}. Therefore, we code the function \texttt{direct} as
+```{r}
+direct <- function(X){
+  # computes the direct spectral estimate using the Hanning Taper
+  # input: A time series stored as a vector X
+  # output: the direct spectral estimate vector of length N = length(X)
+  
+  N <- length(X)
+  # by not storing intermediate values, we are more save memory and increase efficiency
+  return(abs(fft(X * (0.5 * sqrt(8/(3*(N+1))) * (1 - cos(2*pi*(1:N)/(N+1))))))^2)}
+```
+From now on, when we refer to the direct spectral estimate, we will refer to the direct spectral estimate \textit{with Hanning taper}.
+
+### 2b
+On pages 50 and 51 of the lecture notes [1, p51-52] we see that for an AR(2) process with $r$ and $f'$ known, we have $\phi_{1,2} = 2r\cos(2\pi f')$ and $\phi_{2,2} = -r^2$. Therefore, for our process with $f' = 1/8$ and $r=0.95$, we have $\phi_{1,2} = 2(0.95)\cos\left(2\pi (1/8)\right) = 1.9/\sqrt{2}$ and $\phi_{2,2} = -(0.95)^2 = -0.9025$. Note, we also have $\sigma^2_\epsilon = 1$. As per the question, we will now simulate $10,000$ realisations of our AR(2) process of length $N$ using \texttt{AR2\_sim(phis,sigma2,N)}, where $N = 16, 32, \dots, 4096 = 2^4, \dots, 2^{12}$. This will be using the \texttt{replicate} function in R. We will then compute the periodogram and direct spectral estimate for each realisation for each $N$, storing values for frequencies $f = 1/8, 2/8, 3/8$ in the $10000 \times 3$ matrices \texttt{periodogram\_vals} and \texttt{direct\_vals}. We will then take means over the 10,000 realisations, which is the equivalent to the means of each column in our aforementioned storage matrices. These values will be stored in the $9 \times 3$ matrices \texttt{periodogram\_means} and \texttt{direct\_means}. Lastly, we will use this in combination with our \texttt{S\_AR} function to compute empirical bias of both estimators for various $N$. 
+```{r 2b}
+# part b
+N_vals <- 2^(4:12) # our N values 16, 32, ..., 4096
+len_Nvals <- length(N_vals)
+
+# our phis and sigma2 as shown in the report
+phis <- c(1.9/sqrt(2), -0.9025)
+sigma2 <- 1
+
+# preallocating the matrices that will store the means
+# 3 columns corresponding the 3 frequencies and len_Nvals rows, one row for each N
+periodogram_means <- matrix(nrow = len_Nvals , ncol = 3)
+direct_means <- matrix(nrow = len_Nvals, ncol = 3)
+
+# looping over each value of N
+for (i in 1:len_Nvals){
+  # generating 10,000 realisations of our AR(2) process, of length N_vals[i]
+  # this is stored in a 10,000 x N_vals[i] matrix
+  X <- t(replicate(10000, AR2_sim(phis, sigma2, N_vals[i])))
+  
+  fvals <- 1:3*N_vals[i]/8+1   # indices at which 1/8,2/8,3/8 located in our vals
+  
+  # storing periodogram and direct estimates at required freqs
+  periodogram_vals <- periodogram(X)[,fvals]
+  direct_vals <- direct(X)[,fvals]
+  
+  # calculating empirical mean and variance at required freqs
+  periodogram_means[i,] <- colMeans(periodogram_vals) 
+  direct_means[i,] <- colMeans(direct_vals)
+}  
+```
+We note that the code or the positions of the $f$ values is \texttt{fvals <- 1:3*N\_vals[i]/8+1}. This is because at each $N$, the vector of Fourier frequencies that the \texttt{fft} function calculates our transform as is $(0, 1/N, 2/N,\dots,(N-1)/N,1)$, so the value at index $k$\textsuperscript{th} is $(k-1)/N$. Hence the value $m/8$ for $m = 1,2,3$ is found at index $mN/8 +1$, which exists as $N/8$ is in integer for our values of $N$, as required. This is also why we used powers of 2 for $N$, as we will have overlapping Fourier frequencies.
+
+
+To calculate the empirical bias we use the definition of bias: the bias of an estimator $T$ of $\theta$ is $E(T) - \theta$. Here, our true values of the spectral density at our $f = 1/8, 2/8, 3/8$ are calculated using the \texttt{S\_AR(f,phis,sigma2)} function created in 1a, and the empirical expected values of the periodogram and direct spectral estimate have been calculated in the code above. We have 9 values for $N$ so our \texttt{periodogram\_means} and \texttt{direct\_means} matrices have size $9 \times 3$, with the $N$ values on the rows and our frequencies on the columns. To find the bias, we will take away the value of the true spectrum vector \texttt{true\_spectrum} from each row of our bias matrices. The inbuilt function \texttt{sweep} does this for us without requiring a for loop.
+```{r}
+# empirical bias
+true_spectrum <- S_AR(c(1/8, 2/8, 3/8), phis, sigma2)
+
+# computing empirical bias by taking away value of true spectrum
+bias_periodogram_mat <- sweep(periodogram_means,2,true_spectrum)
+bias_direct_mat <- sweep(direct_means, 2, true_spectrum)
+```
+
+
+Now, let us plot the empirical bias. It is natural to plot the empirical bias against $\log_2(N)$, as our values of $N$ are powers of 2. We note that the dotted line at $y=0$ represents an unbiased estimate.
+```{r, fig.width= 8, fig.height=4, fig.cap = "As indicated, the we show the empirical biases over 10,000 simulations at frequencies (from left to right) $f = 1/8, 2/8, 3/8$. The dotted black line represents no bias."}
+# plotting empirical bias
+# positioning plots side-by-side, and making space for main title using oma
+par(mfrow=c(1,3), oma=c(0,0,1.8,0))
+
+# the titles for our subplots
+fvals_plot = c("f = 1/8", "f = 2/8", "f = 3/8")
+
+# new plot for each f value
+for (i in 1:3){
+# plotting the bias for the periodogram
+plot(4:12, bias_periodogram_mat[,i] ,type = "b", main = fvals_plot[i], 
+     ylab = "Empirical Bias", xlab = expression(log[2](N)))
+  
+# adding the line for direct spectral estimator bias  
+lines(4:12, bias_direct_mat[,i], col="red", type = "b")
+
+# a horizontal dotted line at y=0, representing an unbiased estimator
+abline(h=0, lty = 3)
+
+# adding legend, positioned to the right of the plot
+legend("right", legend=c("Periodogram", "Direct"), col=1:2, lty=1, cex = 0.7)}
+
+# main title
+mtext("Empirical Bias against N for for Periodogram and Direct, various frequencies", 
+      side = 3, line = 0.5, outer = TRUE)
+```
+
+
+### 2c
+To motivate the comparison between the two estimators, we will plot the true spectral density function (sdf) between frequencies $0$ to $1/2$. This is shown in Figure 2. Note: the sdf has a period of length $1/2$ as we assumed a sampling interval of $\Delta t=1$ throughout, so this plot shows all available information.
+```{r 2c, fig.width=6, fig.height=4, fig.cap="The true spectrum of an AR(2) process for $f\\in[0,1/2]$ with $\\phi_{1,2} = 1.9/\\sqrt{2}$, $\\phi_{2,2} = -0.9025$, and $\\hat{\\sigma}^2_{\\epsilon} = 1$."}
+# part c
+xvals <- seq(0,0.5,l=1000)
+# plotting true spectral density
+plot(xvals, 10*log10(S_AR(xvals, phis, 1)), xlab = "Frequency (Hz)", 
+     ylab = "Spectral Density (dB)", type = "l", main = "True Spectral Density")
+```
+Using the \texttt{optimize} function in R, we see that there is a peak in the sdf of ~23 dB near $f = 1/8$.
+```{r}
+# finding maximum using optimize, in the interval (0, 0.5)
+max_q2 <- optimize(S_AR, c(0,0.5), phis = phis, sigma2 = sigma2, maximum = TRUE)
+cat("Maximum value of", 10*log10(max_q2$objective), "dB at f =", max_q2$maximum)
+```
+We may also calculate the dynamic range, which is defined as [1, p61] \[10 \log _{10}\left(\frac{\max _{f} S(f)}{\min _{f} S(f)}\right)\]
+As $S(f)$ is periodic, we can restrict ourselves to the $f\in[0,1/2]$. 
+```{r}
+# finding maximum using optimize, in the interval (0, 0.5)
+min_q2 <- optimize(S_AR, c(0,0.5), phis = phis, sigma2 = sigma2, maximum = FALSE)
+cat("Dynamic Range:", 10*log10(max_q2$objective/min_q2$objective))
+```
+
+After observing the plots, we see
+\begin{enumerate}
+\item \textbf{As $\mathbf{N}$ increases, empirical bias decreases}. For all our frequencies, this trend is clear. This makes sense as both the periodogram $\hat{S}^{(p)}(f)$ and the direct spectral estimator $\hat{S}^{(d)}(f)$ using the Hanning taper are asymptotically unbiased estimators for the spectrum $S(f)$ [1, p61], [2, p.9, 11.9].
+\item \textbf{The direct spectral estimator has lower empirical bias than the periodogram for $\mathbf{f=2/8,3/8}$ and is similar for $\mathbf{f=1/8}$}. This is due to side-lobe leakage: power from $f=1/8$, where there is a peak in spectral density leaks through side-lobes onto the other frequencies we measure, $f = 2/8, 3/8$ [1, p61]. Indeed, our process has a large dynamic range of about $33.5$. We indeed see that both estimators overestimate $S(f)$ at $f = 2/8, 3/8$. However, our direct spectral estimator uses a non-rectangular data taper (namely the Hanning Taper). This means that the spectral window $\mathcal{H}(f)$ associated with $\hat{S}^{(d)}(f)$ has much lower, and smoother side-lobes than Fejer's kernel $\mathcal{F}(f)$, the spectral window associated with $\hat{S}^{(p)}(f)$. And therefore, we have lower side-lobe leakage and bias at $f = 2/8, 3/8$ with our direct spectral estimator $\hat{S}^{(d)}(f)$.
+\item \textbf{$\mathbf{\hat{S}^{(d)}(f)}$ performs marginally worse than $\mathbf{\hat{S}^{(p)}(f)}$ for $\mathbf{f=1/8}$ and smaller $\mathbf{N}$}. This may be due the fact that as we reduce the side-lobe leakage with $\hat{S}^{(d)}(f)$ by tapering, we decrease the resolution of the spectrum as the main lobe of $\mathcal{H}(f)$ gets wider [1, p64], leading to smoothing bias where we underestimate the peak value of $S(f) at f = 1/8$.
+\item \textbf{In general, the bias is greatest for $\mathbf{f=1/8}$ and lowest for $\mathbf{f=3/8}$}. This could be due to the fact that $f=1/8$ is a sharp peak, so it requires a larger $N$ to be accurate. Also we may have larger bias at $f=2/8$ due to larger side-lobe leakage there, since it is closer to $1/8$ than $3/8$ is.
+\end{enumerate}
+
+
+
+
+# Question 3
+Downloading the time series \texttt{10.csv} of length 128, we will read it into our R environment
+```{r}
+# reading our time series csv - I am number 10
+ts_dat <- read.csv("10.csv", header = FALSE, col.names = "")$X
+```
+
+### 3a
+As in question 2, we compute the periodogram and direct spectral estimate using the Hanning taper using our \texttt{periodogram} and \texttt{direct} functions respectively. We will also use \texttt{fftshift} to get back to the `natural' frequency domain of $[-1/2,1/2)$. This is because the \texttt{fftshift} function simply swaps the left and right halves of the vector containing the spectral estimates at the Fourier frequencies. This moves our estimate of zero-frequency component to the the centre of the vector, and as $S(f)$ is periodic, we essentially get our estimated periodogram over $[-1/2,1/2)$. For our vector of length 128, the new values of $f$ that we plot against now become $(-64/128, -63/128, \dots, 0, 1/128, \dots, 63/128)$. We will now plot the both estimates on separate axes over the frequency range $[-1/2, 1/2]$
+```{r 3a, fig.width= 8.5, fig.height= 4, message=FALSE, fig.cap="Left: Plot of periodogram of time series of length 128 \\texttt{10.csv}. Right: Plot of the direct spectral estimate using the Hanning Taper for the same series. Axes for both plots are the same."}
+# the library SynchWave contains fftshift
+library(SynchWave)
+
+# the new f values after the fftshift
+fvals <- seq(-0.5,63/128,l=128)
+
+# getting plots side-by-side
+par(mfrow=c(1,2))
+
+# computing periodogram and direct spectral estimate and plotting
+# multiplying yval by 10log10 to get value in decibels
+plot(fvals, 10*log10(fftshift(periodogram(ts_dat))), type = "l", main = "Periodogram", 
+     xlab = "Frequency (Hz)", ylab = "Spectral Density (dB)", 
+     xlim = c(-0.5,0.5), ylim = c(-20,13), xaxt = 'n')
+
+# getting better tick marks on the x axis - manually rotating tick values
+axis(1, xaxp=c(-0.5, 0.5, 10), las=2)
+
+# plotting direct spectral estimate
+plot(fvals, 10*log10(fftshift(direct(ts_dat))), type = "l", main = "Direct Spectral Estimate", 
+     xlab = "Frequency (Hz)", ylab = "Spectral Density (dB)", 
+     xlim = c(-0.5,0.5),ylim = c(-20,13), xaxt = 'n')
+axis(1, xaxp=c(-0.5, 0.5, 10), las=2)
+
+```
+
+### 3b
+We directly implement the methods as shown in the lecture notes between pages 66 and 73 [1]. All the functions take inputs \texttt{X} and \texttt{p} which represent the time series (of length 128 in our case) and the $p$ value corresponding to an $\text{AR}(p)$ process respectively. They output a named list consisting of \texttt{phi\_hat} which is the vector of estimates $\mathbf{\phi_p} = (\phi_{1,p},\dots, \phi_{p,p})$ and \texttt{sigma2\_hat} which represents the estimate for the variance, $\hat{\sigma}^2_{\epsilon}$.
+```{r}
+# Yule-Walker method - [1, p66-67]
+YW <- function(X, p){
+  # calculating acvs
+  acvs <- acvs_hat(X, 0:p)
+  # calculating lowercase and uppercase gamma as in the notes
+  gamma_hat <- acvs[2:(p+1)]
+  Gamma_hat <- toeplitz(acvs[1:p])
+  phi_hat <- solve(Gamma_hat, gamma_hat)
+  sigma2_hat <- acvs[1] - phi_hat %*% gamma_hat
+  
+  # returning as a named list
+  list("phi_hat" = phi_hat, "sigma2_hat" = c(sigma2_hat))
+}
+```
+
+For forward least squares (LS) and approximate maximum likelihood (ML) the estimate for $\mathbf{\phi_p} = (\phi_{1,p},\dots, \phi_{p,p})$ is equivalent, so it is simple to just alter the calculation of \texttt{phi\_hat} depending on whether we want the LS or ML estimate. Therefore, we include the keyword argument \texttt{ML} which is set to \texttt{FALSE} by default. This allows us to simply create the ML estimate function by changing how we calculate the value of $\hat{\sigma}^2_{\epsilon}$ when \texttt{ML} is set to true.
+```{r}
+# (forward) Least-squares - [1, p70-71]
+# a toggle for ML since the methods are very similar
+LS <- function(X, p, ML = FALSE){
+  N <- length(X)
+  
+  # creating F
+  F <- matrix(nrow = N - p, ncol = p)
+  for (i in p:(N-1)) {F[(i-p+1),] <- X[i:(i-p+1)]}
+  X_bold <- X[(p+1):N]
+  
+  # solving for least-squares estimator
+  phi_hat <- solve(t(F) %*% F, t(F) %*% X_bold)
+  
+  # toggling the sigma2_hat value if we are using LS or ML
+  if (ML == FALSE) sigma2_hat <- t(X_bold - F %*% phi_hat) %*% (X_bold - F %*% phi_hat) / (N-2*p)
+  else sigma2_hat <- t(X_bold - F %*% phi_hat) %*% (X_bold - F %*% phi_hat) / (N-p)
+
+  list("phi_hat" = c(phi_hat), "sigma2_hat" = c(sigma2_hat)) 
+}
+
+# Approximate Maximum Liklihood [1, p71-73]
+ML <- function(X,p) LS(X, p, ML = TRUE)
+```
+
+### 3c
+Implementing the \texttt{AIC} function and outputting the table, as required.
+```{r 3c}
+# part c
+# creating AIC function for ease of use
+AIC <- function(p, N, sigma2_hat) 2*p + N*log(sigma2_hat)
+
+# preallocating matrix to store AIC values
+aic_mat <- matrix(nrow = 20, ncol = 3)
+
+# calculating the AIC value for each p for all 3 methods at once
+for (p in 1:20) aic_mat[p,] <- AIC(p, 128, c(YW(ts_dat,p)$sigma2_hat, 
+                                             LS(ts_dat,p)$sigma2_hat, ML(ts_dat,p)$sigma2_hat))
+
+# converting matrix into a dataframe with p values to output as a table
+aic_df <- data.frame("p" = 1:20, "YW" = aic_mat[,1], "LS" = aic_mat[,2], "ML" = aic_mat[,3])
+
+# using knitr library to output a latex table
+library(knitr)
+kable(aic_df, caption = "A table displaying the AIC for the Yule-Walker, Least-Squares, 
+      and Approximate Maximum Likelihood Methods where the order, $p$, 
+      ranges from 1 to 20. Accuracy of 3dp.", digits = 3)
+```
+
+### 3d
+To select the `best' model, we aim to get the \textit{lowest} Akaike information criterion (AIC) [1, p76]. We will use \texttt{which.min} to find the order $p$ for each method that leads to the lowest AIC. 
+```{r 3d}
+# part d
+# p_mins are the values of p which give the smallest aic for each method
+p_mins <- list("YW" = which.min(aic_df$YW), "LS" = which.min(aic_df$LS), "ML" = which.min(aic_df$ML))
+
+# output these values
+cat("Best fit p values - YW:", p_mins$YW, "; LS:", p_mins$LS, "; ML:", p_mins$ML,"\n\n")
+```
+
+The best fit values are pretty similar. 
+
+We will then output the $p+1$ parameter values for each method which give us the lowest AIC. Note: when we output the $\phi$'s they are in the usual order $(\phi_{1,p},\dots, \phi_{p,p})$.
+```{r}
+# the estimated parameter values for each method
+YW_best <- YW(ts_dat,p_mins$YW)
+LS_best <- LS(ts_dat,p_mins$LS)
+ML_best <- ML(ts_dat,p_mins$ML)
+
+cat("YW: \nPhis = (", YW_best$phi_hat, ")\nSigma2 =", YW_best$sigma2_hat, "\n\n")
+cat("LS: \nPhis = (", LS_best$phi_hat, ")\nSigma2 =", LS_best$sigma2_hat, "\n\n")
+cat("ML: \nPhis = (", ML_best$phi_hat, ")\nSigma2 =", ML_best$sigma2_hat, "\n\n")
+```
+
+
+### 3e
+We will now plot the spectral density functions for the best fit models on a single axis. As we plotted the spectral estimates in 3a for $f \in [-1/2, 1/2]$, we will do the same here. 
+```{r 3e, fig.cap = "A single plot showing the spectral density functions of the `best-fit' Yule-Walker AR(4), Least Squares AR(5), and Approximate Maximum Likelihood AR(5) methods which estimate the the sdf of the time series \\texttt{10.csv}."}
+# part e
+# plotting best fit spectral density functions on a single graph
+plot(fvals, 10*log10(S_AR(fvals, YW_best$phi_hat, YW_best$sigma2_hat)), xlab = "Frequencies (Hz)",
+     ylab = "Spectral Density (dB)", type = "l", 
+     main = "Plot of 'Best Fit' Spectral Density functions ", ylim = c(-12,10), xaxt = 'n')
+
+# plotting LS and ML lines
+lines(fvals, 10*log10(S_AR(fvals, LS_best$phi_hat, LS_best$sigma2_hat)), col="green")
+lines(fvals, 10*log10(S_AR(fvals, ML_best$phi_hat, ML_best$sigma2_hat)), col="red")
+
+# changing axis labels once again to get better labelling
+axis(1, xaxp=c(-0.5, 0.5, 10))
+legend("bottomright", legend=c("YW", "LS", "ML"), col=c("black", "green", "red"), lty=1)
+```
+By inspection, the spectral density functions seem to agree with the general shape of the estimated spectral densities in 3a. Furthermore, all the spectral density functions have a very similar shape.
+
+\newpage
+# Question 4
+Let us assume we have only observed values $X_{1}, \dots X_{118}$ and try to forecast $X_{119}, \dots, X_{128}$. Denote $X_t(l)$ as am $l$-step ahead forecast, i.e. a forecast of $X_{t+l}$. As stated at p92 of the lecture notes [1], for an AR$(p)$ process, $X_t(l)$ depends only on the $p$ values of $\{X_t\}$ observed before $l$, $(X_{l-1}, \dots, X_{l-p})$. Furthermore, similarly to finding a forecast for the AR(1) process, our best forecast $X_t(l)$  in our AR$(p)$ process is found by setting future innovation terms $\{\epsilon_t\}$ to zero since they have an expectation of 0. Therefore, if we model our time series as an AR$(p)$ process, we may write the solution directly from the difference equations 
+\begin{align*}
+X_{t}(1)&=\phi_{1, p} X_{t}+  \phi_{2, p} X_{t-1} + \ldots+\phi_{p, p} X_{t-p+1}\\
+X_{t}(2)&=\phi_{1, p} X_{t}(1) + \phi_{2, p} X_{t} +\ldots+\phi_{p, p} X_{t-p+2}\\ \vdots\\
+X_{t}(p)&=\phi_{1, p} X_{t}(p-1) + \phi_{2, p} X_{t}(p-2) +\ldots+\phi_{p, p} X_{t}\\
+X_{t}(p+1)&=\phi_{1, p} X_{t}(p) + \phi_{2, p} X_{t}(p-1) +\ldots+\phi_{p, p} X_{t}(1)\\ \vdots\\
+X_{t}(\tau)&=\phi_{1, p} X_{t}(\tau -1) + \phi_{2, p} X_{t}(\tau-2) +\ldots+\phi_{p, p} X_{t}(\tau -p)
+\end{align*}
+where $\tau > p$.
+
+
+For example, in our Yule-Walker model, where $p=4$, we will have 
+\begin{align*}
+X_{118}(1)&=\phi_{1, 4} X_{118}+  \phi_{2, 4} X_{117} +  \phi_{3, 4} X_{116} + \phi_{4, 4} X_{115}\\
+X_{118}(2)&=\phi_{1, 4} X_{118}(1)+  \phi_{2, 4} X_{118} +  \phi_{3, 4} X_{117} + \phi_{4, 4} X_{116}\\
+\vdots \\
+X_{118}(10)&=\phi_{1, 4} X_{118}(9) + \phi_{2, 4} X_{118}(8) + \phi_{3, 4} X_{118}(7) + \phi_{4, 4} X_{118}(6)
+\end{align*}
+As defined $X_{118}(t)$ is our forecast for $X_{118+t}$.\\
+
+
+Implementing this iteratively in code, we have
+```{r}
+# ts values, with X_119,..., X_128 = 0
+ts_dat_forecast <- c(ts_dat[1:118], rep(0,10))
+
+# a dataframe to store all the forecast values
+forecast_df <- data.frame("t" = 1:128, "True" = ts_dat, "YW" = ts_dat_forecast, 
+                          "LS" = ts_dat_forecast, "ML" = ts_dat_forecast)
+
+# finding best estimate values by setting future innovations to zero
+# dot product of phis and previous values (realised or predicted) for each method
+for (i in 119:128){
+  forecast_df[i,3:5] <- c(YW_best$phi_hat %*% forecast_df$YW[(i-1):(i-p_mins$YW)], LS_best$phi_hat %*%
+  forecast_df$LS[(i-1):(i-p_mins$LS)], ML_best$phi_hat %*% forecast_df$ML[(i-1):(i-p_mins$ML)])}
+```
+
+In our AIC analysis in 3d, we found that the order $p$ of both the ML and LS estimators which give us the lowest AIC is 5. And as the vector of $\phi$'s are calculated in the same way for both method, the estimates of the vector $\mathbf{\phi_5}$ is the same for both methods. Furthermore, in our forecast, since we have set future innovations to zero, the forecast is characterised by the vector of $\phi$'s, hence we see that the forecasts for the ML and LS are the same for all time points.
+```{r}
+# table comparing values
+kable(forecast_df[110:128,], row.names = F, caption = "A table comparing the actual (true) values 
+      of the time series \\texttt{10.csv} between time points 110 and 128 with the three forecasts 
+      using the `best-fit' values calculated in question 3. Forecasting begins at $t=119$. 
+      Accuracy of 3dp.", digits = 3)
+```
+As expected if our method is not erroneous, the values in all four columns are equal between $t= 110$ and $t=118$. \\
+
+
+We will now plot the time series between $t=110$ and $t=128$ on a single plot.
+```{r, fig.cap="Between time points 110 and 128, the plot of the true time series as well as the Yule-Walker (order 4), Least-Squares (order 5), and Approximate Maximum Likelihood (order 5) forecasts. Between time points 110 and 118 they are equivalent. Horizontal line at $y=0$ indicating the assumed mean of the time series. LS and ML lines overlap for the whole plot, as well as approximately overlapping with YW until $t=121$."}
+# plotting all forecasts and true values on a single plot
+# vector of colours
+cols <- c("black","green", "blue", "red")
+plot.ts(forecast_df[110:128,2:5], plot.type = "single", col = cols, 
+        main = "Plot of True Time Series and YW, LS, and ML Forecast", 
+        ylab = "Value", axes = FALSE, lty = 1:4)
+
+# horizontal line at y = 0
+abline(h=0, lty = 3)
+
+# setting custom axis to represent the times starting for 110
+axis(1, 1:19, 110:128)
+axis(2)
+box()
+legend("topright", legend=c("True", "YW", "LS", "ML"), col=cols, lty=1:4, cex = 0.9)
+```
+In Figure 5, we note that the forecasts, as expected, tend towards 0 over time, since the mean of our time series \texttt{10.csv} is assumed to be zero.
+
+## References
+\begin{enumerate}
+\item E. Cohen Time Series Analysis, Lectures Notes, Imperial College London, 2020. 2020.
+\item Percival DB. 11. Spectral Analysis of Univariate and Bivariate Time Series. Statistical Methods for Physical Science. 1994 Dec 13;28:313.
+\end{enumerate}
